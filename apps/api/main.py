@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from packages.domain.completeness import RULES, evaluate_rule_ids
+from packages.domain.design_basis import DesignBasis
 from packages.domain.requirements import (
     EvidenceReference,
     RequirementKey,
@@ -21,9 +23,12 @@ from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from apps.api.auth import hash_password, issue_session_token, session_expiry, verify_password
 from apps.api.db import Base, get_engine, get_session
 from apps.api.models import (
     AuditEvent,
+    AuthSession,
+    DesignBasisVersion,
     Document,
     DocumentState,
     EvidenceSpan,
@@ -72,19 +77,70 @@ class ReviewInput(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class LoginInput(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class BootstrapInput(LoginInput):
+    organization_name: str = Field(min_length=1, max_length=200)
+    display_name: str = Field(min_length=1, max_length=200)
+
+
+class DesignBasisInput(BaseModel):
+    rated_power_mw: float = Field(gt=0)
+    nominal_energy_mwh: float = Field(gt=0)
+    required_usable_energy_mwh: float = Field(gt=0)
+    duration_hours: float = Field(gt=0)
+    project_life_years: int = Field(gt=0)
+    availability_target_percent: float = Field(ge=0, le=100)
+    round_trip_efficiency_target_percent: float = Field(ge=0, le=100)
+    cycles_per_day: float = Field(ge=0)
+    use_case: str = Field(min_length=1, max_length=100)
+    ac_dc_boundary: str = Field(min_length=1, max_length=200)
+    response_time_seconds: float | None = Field(default=None, gt=0)
+    capacity_retention_final_year: int | None = Field(default=None, gt=0)
+
+
 def actor_context(
+    authorization: str | None = Header(default=None),
     x_tenant_id: UUID | None = Header(default=None),
     x_actor_id: UUID | None = Header(default=None),
     session: Session = Depends(get_session),
 ) -> tuple[UUID, UUID]:
-    if x_tenant_id is None or x_actor_id is None:
+    if x_tenant_id is None:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="tenant and actor context required"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="organization context required"
+        )
+    actor_id: UUID | None = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ")
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        session_record = session.scalar(
+            select(AuthSession).where(
+                AuthSession.token_hash == token_hash,
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > datetime.now(UTC),
+            )
+        )
+        if session_record is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
+        user = session.get(User, session_record.user_id)
+        if user is None or user.disabled_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="user is unavailable"
+            )
+        actor_id = user.id
+    elif get_settings().environment == "local" and get_settings().allow_development_identity:
+        actor_id = x_actor_id
+    if actor_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required"
         )
     if (
         session.scalar(
             select(Membership).where(
-                Membership.tenant_id == x_tenant_id, Membership.user_id == x_actor_id
+                Membership.tenant_id == x_tenant_id, Membership.user_id == actor_id
             )
         )
         is None
@@ -92,7 +148,7 @@ def actor_context(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="tenant membership required"
         )
-    return x_tenant_id, x_actor_id
+    return x_tenant_id, actor_id
 
 
 def ensure_schema() -> None:
@@ -128,6 +184,17 @@ def project_data(project: Project) -> dict[str, object]:
         "tenant_id": project.tenant_id,
         "name": project.name,
         "timezone": project.timezone,
+    }
+
+
+def design_basis_data(basis: DesignBasisVersion) -> dict[str, object]:
+    return {
+        "id": basis.id,
+        "version": basis.version,
+        "status": basis.status,
+        "data": basis.data,
+        "created_at": basis.created_at,
+        "approved_at": basis.approved_at,
     }
 
 
@@ -183,6 +250,74 @@ def readiness() -> dict[str, str]:
     return {"status": "ready"}
 
 
+def session_response(session: Session, user: User) -> dict[str, object]:
+    token, token_hash = issue_session_token()
+    session.add(
+        AuthSession(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=session_expiry(get_settings().session_ttl_minutes),
+            created_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": get_settings().session_ttl_minutes * 60,
+        "user": {"id": user.id, "email": user.email, "display_name": user.display_name},
+    }
+
+
+@app.post("/auth/bootstrap", status_code=201, tags=["auth"])
+def bootstrap_local_account(
+    payload: BootstrapInput, session: Session = Depends(get_session)
+) -> dict[str, object]:
+    ensure_schema()
+    if get_settings().environment != "local":
+        raise HTTPException(status_code=404, detail="not found")
+    if session.scalar(select(User).where(User.email == payload.email)) is not None:
+        raise HTTPException(status_code=409, detail="email already exists")
+    user = User(
+        email=payload.email.lower(),
+        display_name=payload.display_name,
+        password_hash=hash_password(payload.password),
+    )
+    tenant = Tenant(name=payload.organization_name)
+    session.add_all([user, tenant])
+    session.flush()
+    session.add(Membership(tenant_id=tenant.id, user_id=user.id, role="organization_owner"))
+    session.commit()
+    result = session_response(session, user)
+    result["organization"] = {"id": tenant.id, "name": tenant.name, "role": "organization_owner"}
+    return result
+
+
+@app.post("/auth/login", tags=["auth"])
+def login(payload: LoginInput, session: Session = Depends(get_session)) -> dict[str, object]:
+    user = session.scalar(select(User).where(User.email == payload.email.lower()))
+    if user is None or user.disabled_at is not None or user.password_hash is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+    if not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
+    return session_response(session, user)
+
+
+@app.post("/auth/logout", status_code=204, tags=["auth"])
+def logout(
+    authorization: str | None = Header(default=None), session: Session = Depends(get_session)
+) -> None:
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="authentication required"
+        )
+    token_hash = hashlib.sha256(authorization.removeprefix("Bearer ").encode()).hexdigest()
+    session_record = session.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash))
+    if session_record is not None and session_record.revoked_at is None:
+        session_record.revoked_at = datetime.now(UTC)
+        session.commit()
+
+
 @app.post("/tenants", status_code=201, tags=["projects"])
 def create_tenant(
     name: str,
@@ -234,6 +369,103 @@ def list_projects(
             select(Project).where(Project.tenant_id == tenant_id).order_by(Project.name)
         )
     ]
+
+
+@app.get("/projects/{project_id}/design-basis", response_model=None, tags=["design-basis"])
+def get_design_basis(
+    project_id: UUID,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> dict[str, object] | None:
+    tenant_id, _ = context
+    basis = session.scalar(
+        select(DesignBasisVersion)
+        .where(
+            DesignBasisVersion.project_id == project_id, DesignBasisVersion.tenant_id == tenant_id
+        )
+        .order_by(DesignBasisVersion.version.desc())
+    )
+    return design_basis_data(basis) if basis else None
+
+
+@app.post(
+    "/projects/{project_id}/design-basis",
+    status_code=201,
+    response_model=None,
+    tags=["design-basis"],
+)
+def create_design_basis(
+    project_id: UUID,
+    payload: DesignBasisInput,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    tenant_id, actor_id = context
+    if (
+        session.scalar(
+            select(Project).where(Project.id == project_id, Project.tenant_id == tenant_id)
+        )
+        is None
+    ):
+        raise HTTPException(404, "project not found")
+    try:
+        DesignBasis(**payload.model_dump()).validate()
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    latest = session.scalar(
+        select(DesignBasisVersion)
+        .where(DesignBasisVersion.project_id == project_id)
+        .order_by(DesignBasisVersion.version.desc())
+    )
+    basis = DesignBasisVersion(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        version=(latest.version + 1) if latest else 1,
+        status="draft",
+        data=payload.model_dump(),
+        created_by=actor_id,
+        created_at=datetime.now(UTC),
+    )
+    session.add(basis)
+    session.flush()
+    audit(
+        session, tenant_id, project_id, actor_id, "design_basis.created", "design_basis", basis.id
+    )
+    session.commit()
+    return design_basis_data(basis)
+
+
+@app.post(
+    "/projects/{project_id}/design-basis/{basis_id}/approve",
+    response_model=None,
+    tags=["design-basis"],
+)
+def approve_design_basis(
+    project_id: UUID,
+    basis_id: UUID,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    tenant_id, actor_id = context
+    basis = session.scalar(
+        select(DesignBasisVersion).where(
+            DesignBasisVersion.id == basis_id,
+            DesignBasisVersion.project_id == project_id,
+            DesignBasisVersion.tenant_id == tenant_id,
+        )
+    )
+    if basis is None:
+        raise HTTPException(404, "design basis not found")
+    if basis.status != "draft":
+        raise HTTPException(409, "only a draft design basis can be approved")
+    basis.status = "approved"
+    basis.approved_by = actor_id
+    basis.approved_at = datetime.now(UTC)
+    audit(
+        session, tenant_id, project_id, actor_id, "design_basis.approved", "design_basis", basis.id
+    )
+    session.commit()
+    return design_basis_data(basis)
 
 
 @app.post(
@@ -611,6 +843,58 @@ def pre_bid_report(
             "compliance conclusions require authorized human review."
         ),
     }
+
+
+@app.get("/projects/{project_id}/completeness-findings", response_model=None, tags=["findings"])
+def completeness_findings(
+    project_id: UUID,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    tenant_id, _ = context
+    basis = session.scalar(
+        select(DesignBasisVersion)
+        .where(
+            DesignBasisVersion.project_id == project_id,
+            DesignBasisVersion.tenant_id == tenant_id,
+            DesignBasisVersion.status == "approved",
+        )
+        .order_by(DesignBasisVersion.version.desc())
+    )
+    if basis is None:
+        raise HTTPException(
+            409, "an approved Design Basis is required before completeness analysis"
+        )
+    requirements = session.scalars(
+        select(Requirement).where(
+            Requirement.project_id == project_id,
+            Requirement.tenant_id == tenant_id,
+            Requirement.state == RequirementState.VERIFIED,
+        )
+    )
+    verified_taxonomies = {requirement.taxonomy for requirement in requirements}
+    missing_rule_ids = set(
+        evaluate_rule_ids(
+            project_life_years=int(str(basis.data["project_life_years"])),
+            use_case=str(basis.data["use_case"]),
+            verified_taxonomies=verified_taxonomies,
+        )
+    )
+    return [
+        {
+            "rule_id": rule.rule_id,
+            "rule_version": rule.version,
+            "type": "missing_requirement",
+            "severity": rule.severity,
+            "status": "open",
+            "why_applies": rule.explanation,
+            "searched_taxonomy": rule.taxonomy,
+            "evidence_found": False,
+            "suggested_action": rule.suggested_action,
+        }
+        for rule in RULES
+        if rule.rule_id in missing_rule_ids
+    ]
 
 
 @app.post(

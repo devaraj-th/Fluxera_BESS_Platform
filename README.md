@@ -2,6 +2,8 @@
 
 Sprint 1 is a secure, evidence-centric modular monolith for Procurement Intelligence, beginning with the manual Pre-Bid Intelligence workflow. Procurement Assurance is the evidence and review capability within that module.
 
+Current validated scope, pending MVP checkpoints, risks, and verification evidence are maintained in [docs/mvp-progress.md](docs/mvp-progress.md).
+
 ## Local setup
 
 Prerequisites: Python 3.12, Docker Compose, and a virtual environment tool.

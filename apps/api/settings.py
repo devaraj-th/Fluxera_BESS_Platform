@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     max_pdf_pages: int = 500
     storage_dir: str = "./private-storage"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    session_ttl_minutes: int = 60
+    allow_development_identity: bool = True
 
     model_config = SettingsConfigDict(env_prefix="FLUXERA_", env_file=".env", extra="ignore")
 
