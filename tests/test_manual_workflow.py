@@ -33,8 +33,18 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
         f"/projects/{project_id}/documents",
         headers=headers,
         files={"file": ("source.pdf", pdf_bytes(), "application/pdf")},
+        data={
+            "document_type": "rfp",
+            "volume": "I",
+            "title": "Request for Selection",
+            "revision": "0",
+            "issue_date": "2026-08-15",
+            "tender_number": "CEB-001",
+        },
     )
     assert upload.status_code == 201
+    assert upload.json()["document_type"] == "rfp"
+    assert upload.json()["page_count"] == 1
     duplicate = client.post(
         f"/projects/{project_id}/documents",
         headers=headers,
@@ -56,6 +66,7 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
         json={"page_id": page_id, "exact_text": "Selected source context"},
     )
     assert evidence.status_code == 201
+    assert evidence.json()["extraction_method"] == "human_transcription"
     span_id = evidence.json()["id"]
     requirement = client.post(
         f"/projects/{project_id}/requirements",
@@ -65,9 +76,46 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
             "taxonomy": "PER",
             "text": "Supplier shall provide source context.",
             "evidence_span_ids": [span_id],
+            "title": "Round-trip efficiency",
+            "metric": "round-trip efficiency",
+            "comparator": ">=",
+            "minimum_value": 85,
+            "unit": "%",
+            "measurement_boundary": "AC-AC at delivery point",
+            "mandatory": True,
+            "evaluation_treatment": "pass_fail",
+            "owner_discipline": "engineering",
         },
     )
     requirement_id = requirement.json()["id"]
+    assert requirement.json()["minimum_value"] == 85
+    assert requirement.json()["measurement_boundary"] == "AC-AC at delivery point"
+    addendum = client.post(
+        f"/projects/{project_id}/documents",
+        headers=headers,
+        files={"file": ("addendum.pdf", pdf_bytes() + b"addendum", "application/pdf")},
+        data={"document_type": "addendum", "addendum_number": "1"},
+    )
+    assert addendum.status_code == 201
+    relationship = client.post(
+        f"/projects/{project_id}/document-relationships",
+        headers=headers,
+        json={
+            "source_document_id": addendum.json()["id"],
+            "target_document_id": upload.json()["id"],
+            "relationship_type": "amends",
+            "affected_clauses": ["4.2"],
+            "reason": "Addendum updates the capacity requirement.",
+        },
+    )
+    assert relationship.status_code == 201
+    impact = client.get(
+        f"/projects/{project_id}/document-relationships/{relationship.json()['id']}/impact",
+        headers=headers,
+    )
+    assert impact.status_code == 200
+    assert impact.json()["requires_re_review"] is True
+    assert [item["id"] for item in impact.json()["impacted_requirements"]] == [requirement_id]
     detailed = client.get(f"/projects/{project_id}/requirements/detailed", headers=headers)
     assert detailed.status_code == 200
     assert detailed.json()[0]["evidence"][0]["page_number"] == 1

@@ -30,6 +30,11 @@ def test_valid_design_basis_passes_deterministic_validation() -> None:
         ({"availability_target_percent": 101.0}, "between"),
         ({"required_usable_energy_mwh": 401.0}, "usable energy"),
         ({"use_case": "frequency_regulation"}, "response-time"),
+        (
+            {"contract_term_years": 15, "total_contractual_cycles": 6300},
+            "total contractual cycles",
+        ),
+        ({"maximum_cycles_per_day": 0.5}, "maximum cycles"),
     ],
 )
 def test_invalid_design_basis_is_rejected(overrides: dict[str, object], message: str) -> None:

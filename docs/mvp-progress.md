@@ -8,12 +8,20 @@ This tracker records only behavior that is reachable and validated. A checked it
 
 - [x] Tenant and project-scoped manual Pre-Bid workflow.
 - [x] PDF MIME/signature/size/page validation, SHA-256 identity, project deduplication, and page-text extraction.
+- [x] Document version metadata, project-scoped document families, immutable addendum/supersession relationships, and evidence-based re-review impact identification.
 - [x] Manual evidence spans linked to source pages.
 - [x] Atomic proposed requirements with controlled taxonomy and stable keys.
+- [x] Additive structured requirement fields and explicit evidence extraction provenance; manual source text is labelled `human_transcription` and remains subject to human verification.
 - [x] Evidence verification, requirement verification/rejection, optimistic version checking, and audit events.
 - [x] Deterministic Pre-Bid source coverage report and verified-requirement CSV export.
 - [x] Design Basis domain validation, draft versioning, and approval API/UI.
+- [x] Procurement project modes/archetypes and expanded versioned Design Basis inputs for project, operating profile, performance, degradation/augmentation, and commercial evaluation assumptions.
 - [x] Deterministic starter completeness rules for long-life capacity retention and frequency-regulation response time.
+- [x] Persisted, auditable deterministic findings with idempotent rule runs and human reasoned terminal resolution, exposed through the Findings workbench UI.
+- [x] Project-scoped clarification records and immutable baseline snapshots with reproducibility hashes, readiness gates, approval records, audit events, and workspace controls.
+- [x] Formula Lab fixed-template configuration versions with optional source clause provenance, approval metadata fields, and retained project-scoped RTE-adjusted calculation history. Arbitrary expressions are not accepted.
+- [x] Live Pre-Bid Assurance Report API and workspace panel with project, Design Basis, document, requirement, finding, clarification, baseline, and limitation summaries plus browser print support.
+- [x] Initial Bid Intelligence project mode with bidder legal-entity profiles and project-scoped human compliance mapping API, plus workflow-mode and bidder-profile workspace controls.
 - [x] Local session bootstrap/login/logout/revocation API and empty-database migration validation.
 - [x] Same-origin Next.js API proxy for local/Codespaces development.
 
@@ -46,14 +54,14 @@ This tracker records only behavior that is reachable and validated. A checked it
 - [x] Project-scoped draft versions and approval transition.
 - [x] API and UI form.
 - [ ] Reviewer comments and role-based approval.
-- [ ] Complete Design Basis fields: jurisdiction/site, environmental conditions, augmentation, COD, currency, timezone, operating window, annual throughput, and retention milestones.
+- [x] Complete core Design Basis fields: site/jurisdiction, COD, currency/timezone, operating window, annual throughput, retention trajectory, augmentation, performance boundary, and commercial assumptions. Environmental conditions remain deferred.
 - [ ] Version comparison and immutable approval gate.
 
 ### Checkpoint 3: Document Platform
 
 - [x] Private local source storage, SHA-256, page extraction, idempotent duplicate upload.
-- [ ] Document inventory metadata: type, volume, revision, issue/effective date, addendum number, review status.
-- [ ] Addendum/supersession model and re-review impact.
+- [x] Document inventory metadata: type, volume, revision, issue/effective date, tender/addendum/corrigendum numbers, parser version, page count, review status, and controlling status.
+- [x] Addendum/supersession model and re-review impact API. It identifies requirements cited to the amended source; human review remains required to resolve the impact.
 - [ ] MinIO/S3 adapter with byte-identical authorized download.
 - [ ] Celery/Redis asynchronous processing, idempotent runs, retry state, job visibility.
 - [ ] OCR fallback, parser/OCR version metadata, and quality-review path.
@@ -64,7 +72,7 @@ This tracker records only behavior that is reachable and validated. A checked it
 - [x] Page text review, manual evidence creation, evidence-backed requirements, reviewer decisions.
 - [x] Requirement detail register with page provenance.
 - [ ] Rendered PDF page/region viewer, selection coordinates, highlights, and scanned-page support.
-- [ ] Structured requirement fields, automatic keys, versions, duplicates, and immutable verified history.
+- [ ] Structured requirement fields, automatic keys, versions, duplicates, and immutable verified history. Additive engineering/evaluation fields and evidence provenance are persisted; automatic keys, duplicate detection, and immutable verified-history snapshots remain outstanding.
 - [ ] Persistent project context, search/filter/sort/pagination, bulk-safe review.
 
 ### Checkpoint 5: AI Candidate Extraction
@@ -77,7 +85,8 @@ This tracker records only behavior that is reachable and validated. A checked it
 ### Checkpoint 6: Intelligence Engines
 
 - [x] Starter deterministic completeness API rules.
-- [ ] Versioned rule catalogue and persisted, resolvable findings.
+- [x] Formula Lab supports the fixed RTE-adjusted capacity-charge template, persisted configuration versions, and reproducible internal scenario history.
+- [ ] Full versioned rule catalogue and persisted, resolvable findings. The initial catalogue has persisted `missing_requirement` findings for capacity retention and frequency response; broader BESS, commercial, qualification, warranty, and addendum rules remain outstanding.
 - [ ] Ambiguity detection and reviewer-controlled improved wording.
 - [ ] Cross-document conflict and addendum impact analysis.
 - [ ] Standards register and reviewer-approved applicability.
@@ -86,8 +95,8 @@ This tracker records only behavior that is reachable and validated. A checked it
 ### Checkpoint 7: Baseline and Reports
 
 - [x] CSV verified requirement register.
-- [ ] Immutable RFP baseline aggregate, readiness gates, version/hash, and approvals.
-- [ ] XLSX workbook and printable Pre-Bid Assurance Report with provenance.
+- [ ] Full immutable RFP baseline aggregate, readiness gates, version/hash, and approvals. The initial freeze workflow requires an approved Design Basis, source documents, verified/resolved requirements, no open high/critical findings, an authorized local approver role, and a written approval reason; required multi-discipline approvals and controlling-document review gates remain outstanding.
+- [ ] XLSX workbook and full printable Pre-Bid Assurance Report with provenance. The current live API/UI report summarizes project records and supports browser printing; XLSX and a complete formal report layout remain outstanding.
 - [ ] Full audit/version report sections.
 
 ### Checkpoint 8: Product Hardening

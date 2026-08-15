@@ -31,16 +31,40 @@ def test_design_basis_versions_and_approval(tmp_path, monkeypatch) -> None:
     actor_id = str(uuid4())
     tenant = client.post("/tenants?name=Basis", headers={"X-Actor-Id": actor_id}).json()
     headers = {"X-Actor-Id": actor_id, "X-Tenant-Id": tenant["id"]}
-    project = client.post("/projects", headers=headers, json={"name": "BESS"}).json()
+    project = client.post(
+        "/projects",
+        headers=headers,
+        json={
+            "name": "BESS",
+            "module_mode": "pre_bid",
+            "procurement_archetype": "rte_adjusted_boo",
+            "tender_number": "RFS-100",
+            "currency": "INR",
+        },
+    ).json()
+    assert project["procurement_archetype"] == "rte_adjusted_boo"
     project_id = project["id"]
 
     invalid = client.post(
         f"/projects/{project_id}/design-basis", headers=headers, json=payload(duration_hours=3)
     )
     assert invalid.status_code == 422
-    first = client.post(f"/projects/{project_id}/design-basis", headers=headers, json=payload())
+    first = client.post(
+        f"/projects/{project_id}/design-basis",
+        headers=headers,
+        json=payload(
+            location="Tamil Nadu",
+            jurisdiction="India",
+            interconnection_voltage_kv=220,
+            delivery_point="220 kV pooling station",
+            cod="2028-03-31",
+            currency="INR",
+            timezone="Asia/Kolkata",
+        ),
+    )
     assert first.status_code == 201
     assert first.json()["version"] == 1
+    assert first.json()["data"]["interconnection_voltage_kv"] == 220
     approved = client.post(
         f"/projects/{project_id}/design-basis/{first.json()['id']}/approve", headers=headers
     )
