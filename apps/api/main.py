@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from packages.domain.requirements import (
     EvidenceReference,
@@ -38,6 +39,13 @@ from apps.api.models import (
 from apps.api.settings import get_settings
 
 app = FastAPI(title="Fluxera BESS Intelligence Platform API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().allowed_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Actor-Id", "X-Tenant-Id"],
+)
 
 
 class ProjectInput(BaseModel):
@@ -476,6 +484,133 @@ def list_requirements(
             .order_by(Requirement.stable_key)
         )
     ]
+
+
+@app.get("/projects/{project_id}/requirements/detailed", response_model=None, tags=["requirements"])
+def list_detailed_requirements(
+    project_id: UUID,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    tenant_id, _ = context
+    requirements = session.scalars(
+        select(Requirement)
+        .where(Requirement.project_id == project_id, Requirement.tenant_id == tenant_id)
+        .order_by(Requirement.stable_key)
+    )
+    result: list[dict[str, object]] = []
+    for requirement in requirements:
+        evidence_links = session.execute(
+            select(RequirementEvidence, EvidenceSpan, Page)
+            .join(EvidenceSpan, EvidenceSpan.id == RequirementEvidence.evidence_span_id)
+            .join(Page, Page.id == EvidenceSpan.page_id)
+            .where(RequirementEvidence.requirement_id == requirement.id)
+            .order_by(Page.page_number, EvidenceSpan.id)
+        )
+        evidence = [
+            {
+                "id": span.id,
+                "page_number": page.page_number,
+                "exact_text": span.exact_text,
+                "verified": link.verified,
+            }
+            for link, span, page in evidence_links
+        ]
+        result.append({**requirement_data(requirement), "evidence": evidence})
+    return result
+
+
+@app.get("/projects/{project_id}/pre-bid-report", response_model=None, tags=["reports"])
+def pre_bid_report(
+    project_id: UUID,
+    context: tuple[UUID, UUID] = Depends(actor_context),
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    tenant_id, _ = context
+    project = session.scalar(
+        select(Project).where(Project.id == project_id, Project.tenant_id == tenant_id)
+    )
+    if project is None:
+        raise HTTPException(404, "project not found")
+    documents = list(
+        session.scalars(
+            select(Document)
+            .where(Document.project_id == project_id, Document.tenant_id == tenant_id)
+            .order_by(Document.created_at, Document.filename)
+        )
+    )
+    pages = list(
+        session.scalars(
+            select(Page)
+            .join(Document)
+            .where(Document.project_id == project_id, Document.tenant_id == tenant_id)
+        )
+    )
+    requirements = list(
+        session.scalars(
+            select(Requirement)
+            .where(Requirement.project_id == project_id, Requirement.tenant_id == tenant_id)
+            .order_by(Requirement.stable_key)
+        )
+    )
+    evidence = list(
+        session.scalars(
+            select(EvidenceSpan).where(
+                EvidenceSpan.project_id == project_id, EvidenceSpan.tenant_id == tenant_id
+            )
+        )
+    )
+    verified_evidence_count = len(
+        list(
+            session.scalars(
+                select(RequirementEvidence)
+                .join(Requirement)
+                .where(
+                    Requirement.project_id == project_id,
+                    Requirement.tenant_id == tenant_id,
+                    RequirementEvidence.verified.is_(True),
+                )
+            )
+        )
+    )
+    state_counts = {state.value: 0 for state in RequirementState}
+    taxonomy_counts: dict[str, int] = {}
+    for requirement in requirements:
+        state_counts[requirement.state] = state_counts.get(requirement.state, 0) + 1
+        taxonomy_counts[requirement.taxonomy] = taxonomy_counts.get(requirement.taxonomy, 0) + 1
+    completed = state_counts[RequirementState.VERIFIED] + state_counts[RequirementState.REJECTED]
+    review_progress = round(completed / len(requirements) * 100) if requirements else 0
+    return {
+        "project_id": project_id,
+        "project_name": project.name,
+        "source_documents": [
+            {
+                "id": document.id,
+                "filename": document.filename,
+                "sha256": document.sha256,
+                "state": document.state,
+                "byte_size": document.byte_size,
+                "created_at": document.created_at,
+                "page_count": sum(page.document_id == document.id for page in pages),
+            }
+            for document in documents
+        ],
+        "document_count": len(documents),
+        "pages_extracted": len(pages),
+        "total_bytes": sum(document.byte_size for document in documents),
+        "requirements_created": len(requirements),
+        "requirements_by_state": state_counts,
+        "requirements_by_taxonomy": taxonomy_counts,
+        "evidence_spans_count": len(evidence),
+        "verified_evidence_count": verified_evidence_count,
+        "review_progress_percent": review_progress,
+        "ready_for_export": state_counts[RequirementState.VERIFIED] > 0,
+        "report_status": "review_ready" if documents else "awaiting_documents",
+        "intelligence_notice": (
+            "Document coverage is complete only for uploaded sources. Requirement extraction and "
+            "compliance conclusions require authorized human review."
+        ),
+    }
 
 
 @app.post(

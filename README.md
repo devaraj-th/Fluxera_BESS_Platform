@@ -26,7 +26,19 @@ npm install
 npm run dev
 ```
 
-The web app is available at `http://localhost:3000`. Set `NEXT_PUBLIC_API_URL` in `apps/web/.env.local` when the API is not on localhost.
+The web app is available at `http://localhost:3000`. By default, Next.js proxies browser `/api/*` requests to the local API, so no browser-visible API URL is needed.
+
+## Validate an upload
+
+1. Start the API before the web app. Do not open `http://localhost:8000` in a browser; it is an API, so `/` returning `404` is expected. Use `http://localhost:8000/docs` or `/health` instead.
+2. In the web app, select **Create workspace**, then **Create project**. The PDF picker intentionally remains disabled until a project exists.
+3. Choose a real PDF. The current implementation accepts only files with MIME type `application/pdf`, PDF magic bytes, and a configured maximum of 50 MB / 500 pages.
+
+### Codespaces
+
+Forward only port `3000` and open its URL from the Ports view. The Next.js proxy forwards `/api/*` internally to the API at port `8000`, so the browser does not need access to the Codespace's API port and no CORS override is required.
+
+When the API runs on a different host, set `NEXT_PUBLIC_API_URL` to that browser-visible URL and add the web origin to `FLUXERA_CORS_ORIGINS`. Restart `uvicorn` and `npm run dev` after changing either setting.
 
 Run checks with:
 

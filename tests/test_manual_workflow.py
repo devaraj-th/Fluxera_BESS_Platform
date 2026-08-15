@@ -42,6 +42,12 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
     )
     assert duplicate.status_code == 201
     assert duplicate.json()["id"] == upload.json()["id"]
+    report = client.get(f"/projects/{project_id}/pre-bid-report", headers=headers)
+    assert report.status_code == 200
+    assert report.json()["document_count"] == 1
+    assert report.json()["pages_extracted"] == 1
+    assert report.json()["requirements_created"] == 0
+    assert report.json()["report_status"] == "review_ready"
 
     page_id = client.get(f"/projects/{project_id}/pages", headers=headers).json()[0]["id"]
     evidence = client.post(
@@ -62,6 +68,10 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
         },
     )
     requirement_id = requirement.json()["id"]
+    detailed = client.get(f"/projects/{project_id}/requirements/detailed", headers=headers)
+    assert detailed.status_code == 200
+    assert detailed.json()[0]["evidence"][0]["page_number"] == 1
+    assert detailed.json()[0]["evidence"][0]["verified"] is False
     review_url = f"/projects/{project_id}/requirements/{requirement_id}/review"
     blocked = client.post(
         review_url, headers=headers, json={"decision": "verified", "expected_version": 1}
@@ -78,6 +88,10 @@ def test_manual_evidence_review_export_and_tenant_isolation(tmp_path, monkeypatc
     )
     assert verified.status_code == 200
     assert verified.json()["state"] == "verified"
+    report = client.get(f"/projects/{project_id}/pre-bid-report", headers=headers)
+    assert report.json()["requirements_by_state"]["verified"] == 1
+    assert report.json()["verified_evidence_count"] == 1
+    assert report.json()["ready_for_export"] is True
     export = client.get(f"/projects/{project_id}/requirements/export.csv", headers=headers)
     assert export.status_code == 200
     assert "CEB160-PER-0042" in export.text
