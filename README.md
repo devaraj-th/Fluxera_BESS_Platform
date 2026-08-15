@@ -1,6 +1,6 @@
-# Fluxera BESS Intelligence & Assurance Platform
+# Fluxera BESS Intelligence Platform
 
-Sprint 1 is a secure, evidence-centric modular monolith for manual Pre-Bid requirement assurance.
+Sprint 1 is a secure, evidence-centric modular monolith for Procurement Intelligence, beginning with the manual Pre-Bid Intelligence workflow. Procurement Assurance is the evidence and review capability within that module.
 
 ## Local setup
 

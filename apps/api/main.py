@@ -37,7 +37,7 @@ from apps.api.models import (
 )
 from apps.api.settings import get_settings
 
-app = FastAPI(title="Fluxera BESS Assurance API", version="0.1.0")
+app = FastAPI(title="Fluxera BESS Intelligence Platform API", version="0.1.0")
 
 
 class ProjectInput(BaseModel):
